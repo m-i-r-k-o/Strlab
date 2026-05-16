@@ -1,10 +1,11 @@
 #include "strlab.h"
 
-#include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <ctype.h>
 #include <stdarg.h>
-#include <errno.h>
+
+#define strlab_max(a,b) (((a) > (b)) ? (a) : (b))
 
 static inline size_t strlab_round_size(size_t size) {
     if(size == 0) return 1;
@@ -19,366 +20,405 @@ static inline size_t strlab_round_size(size_t size) {
     return size + 1;
 }
 
-static inline int strlab_string_little(const strlab_string string) {
-    return string->dat == NULL;
+static inline char *strlab_getbuf(const strlab_string str) {
+    if(str->dat) return str->dat;
+    return (char*)(str->little);
 }
 
-static inline char *strlab_string_dat(const strlab_string string) {
-    if(strlab_string_little(string)) return (char*)string->little;
-    return string->dat;
+static inline void strlab_init_struct(strlab_string str) {
+    str->len = 0;
+    str->size = STRLAB_SSO_SIZE;
+    str->dat = NULL;
+    str->little[0] = '\0';
+    str->dynamic = 1;
 }
 
-static int strlab_string_ensure(strlab_string string, size_t newsiz) {
-    if(string->size >= newsiz) return 0;
+static inline int strlab_free_struct(strlab_string str) {
+    if(!str->dynamic) return STRLAB_FREE_ON_FIXED;
+    if(str->dat) STRLAB_FREE(str->dat);
+    return STRLAB_SUCCESS;
+}
 
-    newsiz = strlab_round_size(newsiz);
+static inline void strlab_clear_struct(strlab_string str) {
+    char *strbuf = strlab_getbuf(str);
+    strbuf[0] = '\0';
+    str->len = 0;
+}
 
+static int strlab_ensure_size(strlab_string str, size_t request) {
+    if(str->size >= request) return STRLAB_SUCCESS;
+    if(!str->dynamic) return STRLAB_MAX_SIZE_REACHED;
+
+    size_t newsiz = strlab_round_size(request);
+    
     char *newdat = STRLAB_MALLOC(newsiz);
-    if(!newdat) return ENOMEM;
+    if(!newdat) return STRLAB_OUT_OF_MEMORY;
 
-    char *src = strlab_string_dat(string);
-    memcpy(newdat, src, string->len);
+    memcpy(newdat, strlab_getbuf(str), str->len);
+    if(str->dat) STRLAB_FREE(str->dat);
 
-    if(!strlab_string_little(string)) {
-        STRLAB_FREE(string->dat);
-    }
-
-    string->size = newsiz;
-    string->dat = newdat;
-
-    return 0;
+    str->dat = newdat;
+    str->size = newsiz;
+    
+    return STRLAB_SUCCESS;
 }
 
-static void strlab_string_create(strlab_string string) {
-    string->size = STRLAB_SIZE;
-    string->len = 0;
-    string->dat = NULL;
-    memset(string->little, 0, STRLAB_SIZE);
-}
-
-static void strlab_string_delete(strlab_string string) {
-    if(strlab_string_little(string)) return;
-    STRLAB_FREE(string->dat);
-}
-
-static int strlab_string_copy(strlab_string string, const char *str, size_t len) {
-    int res = strlab_string_ensure(string, len + 1);
-    if(res != 0) return res;
-
-    char *dat = strlab_string_dat(string);
-    memcpy(dat, str, len);
-
-    string->len = len;
-    dat[len] = '\0';
-
-    return 0;
-}
-
-static int strlab_string_append(strlab_string string, const char *str, size_t len) {
-    int res = strlab_string_ensure(string, string->len + len + 1);
-    if(res != 0) return res;
-
-    char* dat = strlab_string_dat(string);
-    memcpy(dat + string->len, str, len);
-
-    string->len += len;
-    dat[string->len] = '\0';
-
-    return 0;
-}
-
-static int strlab_string_insert(strlab_string string, size_t index, const char *str, size_t len) {
-    int res = strlab_string_ensure(string, string->len + len + 1);
-    if(res != 0) return res;
-
-    char *dat = strlab_string_dat(string);
-    memmove(dat + index + len, dat + index, len);
-    memcpy(dat + index, str, len);
-
-    string->len += len;
-    dat[string->len] = '\0';
-
-    return 0;
-}
-
-static int strlab_string_remove(strlab_string string, size_t index, size_t length) {
-    if(index + length >= string->len) return ERANGE;
-
-    char *dat = strlab_string_dat(string);
-    memmove(dat + index, dat + index + length, length);
-
-    return 0;
-}
-
-static void *strlab_string_memrmem(const void *_haystack, size_t hlen, const void *_needle, size_t nlen) {
-    if(nlen == 0 || hlen < nlen) return NULL;
-
-    const uint8_t *haystack = _haystack;
-    const uint8_t *needle = _needle;
-
-    for(size_t i = hlen - nlen + 1; i-- > 0;) {
-        if(memcmp(haystack + i, needle, nlen) == 0) {
-            return (void*)(haystack + i);
-        }
-    }
-
-    return NULL;
-}
-
-static int strlab_string_pos_replace(
-    strlab_string string, const char *old, size_t oldlen, const char *new, size_t newlen,
-    void *(*mem)(const void*, size_t, const void*, size_t)
+static inline int strlab_low_copy(
+    strlab_string str, size_t offset, const char *src, size_t srclen
 ) {
-    if(oldlen == 0) return 0;
+    if(offset > str->len) return STRLAB_OUT_OF_RANGE;
+    if(srclen == 0) return STRLAB_SUCCESS;
 
-    char *dat = strlab_string_dat(string);
-    char *pos = mem(dat, string->len, old, oldlen);
-    if(!pos) return 0;
+    size_t newlen = strlab_max(str->len, offset + srclen);
+    size_t maxsiz = newlen + 1;
+    
+    int error = strlab_ensure_size(str, maxsiz);
+    if(error) return error;
 
-    size_t offset = pos - dat;
-    size_t totlen = string->len - oldlen + newlen;
+    char *strbuf = strlab_getbuf(str);
+    memcpy(strbuf + offset, src, srclen);
+    str->len = newlen;
+    strbuf[newlen] = '\0';
 
-    if(totlen + 1 > string->size) {
-        int res = strlab_string_ensure(string, totlen + 1);
-        if(res != 0) return ENOMEM;
-
-        dat = strlab_string_dat(string);
-        pos = dat + offset;
-    }
-
-    size_t tailoff = offset + oldlen;
-    size_t taillen = string->len - tailoff + 1;
-
-    memmove(pos + newlen, pos + oldlen, taillen);
-    memcpy(pos, new, newlen);
-
-    string->len = totlen;
-    return 0;
+    return STRLAB_SUCCESS;
 }
 
-static int strlab_string_replace(
-    size_t *countout, strlab_string string,
-    const char *old, size_t oldlen, const char *new, size_t newlen
+static inline int strlab_low_makegap(strlab_string str, size_t offset, size_t space, char fill) {
+    if(offset > str->len) return STRLAB_OUT_OF_RANGE;
+    if(space == 0) return STRLAB_SUCCESS;
+
+    size_t newlen = str->len + space;
+    size_t newsiz = newlen + 1;
+
+    int error = strlab_ensure_size(str, newsiz);
+    if(error) return error;
+    
+    char *strbuf = strlab_getbuf(str);
+    memmove(strbuf + offset + space, strbuf + offset, str->len - offset + 1);
+    memset(strbuf + offset, fill, space);
+    str->len = newlen;
+
+    return STRLAB_SUCCESS;
+}
+
+static inline int strlab_low_remove(strlab_string str, size_t offset, size_t torm) {
+    if(offset > str->len) return STRLAB_OUT_OF_RANGE;
+    if(torm == 0) return STRLAB_SUCCESS;
+
+    if(offset + torm > str->len) torm = str->len - offset;
+    size_t newlen = str->len - torm;
+
+    char *strbuf = strlab_getbuf(str);
+    memmove(strbuf + offset, strbuf + offset + torm, newlen - offset + 1);
+    str->len = newlen;
+
+    return STRLAB_SUCCESS;
+}
+
+static size_t strlab_low_search(
+    const strlab_string str, size_t offset, const char *target, size_t tarlen
 ) {
-    if(oldlen == 0) return 0;
+    if(offset > str->len) return STRLAB_NPOS;
+    if(tarlen > str->len) return STRLAB_NPOS;
+    if(tarlen == 0) return STRLAB_NPOS;
+    if(tarlen == str->len) return 0;
 
-    int res = 0;
-    size_t count = 0;
-    size_t curlen = string->len;
-    size_t curoff = 0;
+    size_t area = str->len - offset;
+    const char *strbuf = strlab_getbuf(str);
+    const char *found = memmem(strbuf + offset, area, target, tarlen);
+    
+    if(!found) return STRLAB_NPOS;
+    return (size_t)(found - strbuf);
+}
 
-    while(1) {
-        char *dat = strlab_string_dat(string);
-        char *pos = memmem(dat + curoff, curlen - curoff, old, oldlen);
-        if(!pos) break;
+static size_t strlab_low_search_backwards(
+    const strlab_string str, const char *target, size_t tarlen
+) {
+    if(tarlen > str->len) return STRLAB_NPOS;
+    if(tarlen == 0) return STRLAB_NPOS;
+    if(tarlen == str->len) return 0;
 
-        size_t offset = pos - dat;
-        size_t totlen = curlen - oldlen + newlen;
+    const char *base = strlab_getbuf(str);
+    const char *ptr = base + str->len - tarlen;
 
-        if(totlen + 1 > string->size) {
-            res = strlab_string_ensure(string, totlen + 1);
-            if(res != 0) break;
+    while(ptr > base) {
+        int found = memcmp(ptr, target, tarlen) == 0;
+        if(found) return (size_t)(ptr - base);
+        ptr--;
+    }
 
-            dat = strlab_string_dat(string);
-            pos = dat + offset;
+    return STRLAB_NPOS;
+}
+
+static int strlab_low_replace(
+    strlab_string str, size_t index, size_t oldlen, const char *new, size_t newlen
+) {
+    if(index > str->len) return STRLAB_OUT_OF_RANGE;
+
+    int error = STRLAB_SUCCESS;
+
+    if(oldlen < newlen) {
+        size_t length = newlen - oldlen;
+        error = strlab_low_makegap(str, index + oldlen, length, '\0');
+    } else if(oldlen > newlen) {
+        size_t length = oldlen - newlen;
+        error = strlab_low_remove(str, index + newlen, length);
+    }
+
+    if(error) return error;
+    error = strlab_low_copy(str, index, new, newlen);
+    index += oldlen;
+    return error;
+}
+
+static int strlab_low_list_append(
+    strlab_string **list, size_t *size, size_t *len, const char *src, size_t srclen
+) {
+    if(*len + 1 >= *size) {
+        size_t newsiz = strlab_round_size(*size + 1);
+
+        strlab_string *newdat = STRLAB_MALLOC(newsiz * sizeof(strlab_string));
+        if(!newdat) return STRLAB_OUT_OF_MEMORY;
+
+        if(*list) {
+            memcpy(newdat, *list, *size * sizeof(strlab_string));
+            STRLAB_FREE(*list);
         }
 
-        size_t tailoff = offset + oldlen;
-        size_t taillen = curlen - tailoff + 1;
-
-        memmove(pos + newlen, pos + oldlen, taillen);
-        memcpy(pos, new, newlen);
-
-        string->len = curlen = totlen;
-
-        curoff = offset + newlen;
-        count++;
-    }
-    
-    char *dat = strlab_string_dat(string);
-    dat[string->len] = '\0';
-    *countout = count;
-
-    return res;
-}
-
-void strlab_create(strlab_string string) {
-    strlab_string_create(string);
-}
-
-void strlab_delete(strlab_string string) {
-    strlab_string_delete(string);
-}
-
-void strlab_clear(strlab_string string) {
-    if(!strlab_string_little(string)) {
-        STRLAB_FREE(string->dat);
+        *list = newdat;
+        *size = newsiz;
     }
 
-    string->len = 0;
-    string->size = STRLAB_SIZE;
-    string->dat = NULL;
-    memset(string->little, 0, STRLAB_SIZE);
+    strlab_string *elem = &(*list)[*len];
+    strlab_init_struct(*elem);
+
+    int error = strlab_low_copy(*elem, 0, src, srclen);
+    if(error) {
+        strlab_free_struct(*elem);
+        return error;
+    }
+
+    *len += 1;
+    return STRLAB_SUCCESS;
 }
 
-int strlab_empty(const strlab_string string) {
-    const char *dat = strlab_string_dat(string);
-    return dat[0] == '\0';
+void strlab_init(strlab_string str) {
+    strlab_init_struct(str);
 }
 
-size_t strlab_length(const strlab_string string) {
-    return string->len;
+int strlab_free(strlab_string str) {
+    return strlab_free_struct(str);
 }
 
-const char *strlab_cstring(const strlab_string string) {
-    return strlab_string_dat(string);
+void strlab_attach(strlab_string str, char *buf, size_t size) {
+    str->len = strlen(buf);
+    str->size = size;
+    str->dat = buf;
+    str->little[0] = '\0';
+    str->dynamic = 0;
 }
 
-void strlab_copy(strlab_string string, const char *dat) {
-    size_t len = strlen(dat);
-    int res = strlab_string_copy(string, dat, len);
-    if(res != 0) {
-        errno = res;
-        STRLAB_ERROR(strlab_copy);
+void strlab_log(const strlab_string string) {
+    printf("'%s' len=%zu size=%zu\n", strlab_cstring(string), string->len, string->size);
+}
+
+void strlab_clear(strlab_string str) {
+    if(!str->dynamic) strlab_free_struct(str);
+    strlab_init_struct(str);
+}
+
+int strlab_isempty(const strlab_string str) {
+    const char *strbuf = strlab_getbuf(str);
+    return strbuf[0] == '\0';
+}
+
+size_t strlab_length(const strlab_string str) {
+    return str->len;
+}
+
+const char *strlab_cstring(const strlab_string str) {
+    return strlab_getbuf(str);
+}
+
+int strlab_greater(const strlab_string str1, const strlab_string str2) {
+    const char *buf1 = strlab_getbuf(str1);
+    const char *buf2 = strlab_getbuf(str2);
+    return strcmp(buf1, buf2) > 0;
+}
+
+int strlab_equals(const strlab_string str1, const strlab_string str2) {
+    const char *buf1 = strlab_getbuf(str1);
+    const char *buf2 = strlab_getbuf(str2);
+    return str1->len == str2->len && memcmp(buf1, buf2, str1->len) == 0;
+}
+
+int strlab_less(const strlab_string str1, const strlab_string str2) {
+    const char *buf1 = strlab_getbuf(str1);
+    const char *buf2 = strlab_getbuf(str2);
+    return strcmp(buf1, buf2) < 0;
+}
+
+int strlab_compare(const strlab_string str1, const strlab_string str2) {
+    const char *buf1 = strlab_getbuf(str1);
+    const char *buf2 = strlab_getbuf(str2);
+    return strcmp(buf1, buf2);
+}
+
+int strlab_copy(strlab_string str, const strlab_string other) {
+    const char *otherbuf = strlab_getbuf(other);
+    return strlab_low_copy(str, 0, otherbuf, other->len);
+}
+
+int strlab_insert(strlab_string str, size_t index, const strlab_string other) {
+    int error = strlab_low_makegap(str, index, other->len, '\0');
+    if(error) return error;
+
+    const char *otherbuf = strlab_getbuf(other);
+    return strlab_low_copy(str, index, otherbuf, other->len); 
+}
+
+int strlab_append(strlab_string str, const strlab_string other) {
+    const char *otherbuf = strlab_getbuf(other);
+    return strlab_low_copy(str, str->len, otherbuf, other->len);
+}
+
+int strlab_erase(strlab_string str, size_t index, size_t length) {
+    return strlab_low_remove(str, index, length);
+}
+
+int strlab_putchar(strlab_string str, int chr) {
+    if(!isascii(chr)) return STRLAB_INVALID_CHAR;
+    char tmp = chr;
+    return strlab_low_copy(str, str->len, &tmp, 1);
+}
+
+int strlab_substr(strlab_string str, size_t index, size_t length) {
+    int error = strlab_low_remove(str, 0, index);
+    if(error) return error;
+    return strlab_low_remove(str, index, str->len - index);
+}
+
+int strlab_repalce(strlab_string str, const strlab_string old, const strlab_string new) {
+    size_t offset = 0;
+    int error = STRLAB_SUCCESS;
+
+    const char *oldbuf = strlab_getbuf(old);
+    const char *newbuf = new ? strlab_getbuf(new) : "";
+    size_t newlen = new ? new->len : 0;
+
+    while(error == STRLAB_SUCCESS) {
+        size_t index = strlab_low_search(str, offset, oldbuf, old->len);
+        if(index == STRLAB_NPOS) break;
+        error = strlab_low_replace(str, index, old->len, newbuf, newlen);
+    }
+
+    return error;
+}
+
+int strlab_rchange(strlab_string str, const strlab_string old, const strlab_string new) {
+    const char *oldbuf = strlab_getbuf(old);
+    const char *newbuf = new ? strlab_getbuf(new) : "";
+    size_t newlen = new ? new->len : 0;
+
+    size_t index = strlab_low_search(str, 0, oldbuf, old->len);
+    if(index == STRLAB_NPOS) return STRLAB_SUCCESS;
+
+    return strlab_low_replace(str, index, old->len, newbuf, newlen);
+}
+
+int strlab_lchange(strlab_string str, const strlab_string old, const strlab_string new) {
+    const char *oldbuf = strlab_getbuf(old);
+    const char *newbuf = new ? strlab_getbuf(new) : "";
+    size_t newlen = new ? new->len : 0;
+
+    size_t index = strlab_low_search_backwards(str, oldbuf, old->len);
+    if(index == STRLAB_NPOS) return STRLAB_SUCCESS;
+
+    return strlab_low_replace(str, index, old->len, newbuf, newlen);
+}
+
+int strlab_ensure(strlab_string str, size_t size) {
+    return strlab_ensure_size(str, size);
+}
+
+size_t strlab_search(const strlab_string str, const strlab_string sub) {
+    const char *subbuf = strlab_getbuf(sub);
+    return strlab_low_search(str, 0, subbuf, sub->len);
+}
+
+const char *strlab_lfind(const strlab_string str, const strlab_string sub) {
+    const char *subbuf = strlab_getbuf(sub);
+    const char *strbuf = strlab_getbuf(str);
+
+    size_t index = strlab_low_search(str, 0, subbuf, sub->len);
+    if(index == STRLAB_NPOS) return NULL;
+    return strbuf + index;
+}
+
+const char *strlab_rfind(const strlab_string str, const strlab_string sub) {
+    const char *subbuf = strlab_getbuf(sub);
+    const char *strbuf = strlab_getbuf(str);
+
+    size_t index = strlab_low_search_backwards(str, subbuf, sub->len);
+    if(index == STRLAB_NPOS) return NULL;
+    return strbuf + index;
+}
+
+int strlab_index(const strlab_string str, size_t index) {
+    if(index >= str->len) return EOF;
+    const char *strbuf = strlab_getbuf(str);
+    return strbuf[index];
+}
+
+char *strlab_offset(strlab_string str, size_t index) {
+    if(index >= str->len) return NULL;
+    char *strbuf = strlab_getbuf(str);
+    return strbuf + index;
+}
+
+int strlab_strip(strlab_string str, const strlab_string set) {
+    const char *strbuf = strlab_getbuf(str);
+    const char *setbuf = set ? strlab_getbuf(set) : " \f\n\r\t\v";
+    size_t setlen = set ? set->len : strlen(setbuf);
+
+    size_t length = 0;
+    while(memmem(setbuf, setlen, strbuf + length, 1)) length++;
+
+    int error = strlab_low_remove(str, 0, length);
+    if(error) return error;
+
+    size_t index = str->len - 1;
+    while(memmem(setbuf, setlen, strbuf - index, 1)) index++;
+
+    return strlab_low_remove(str, index, str->len - index);
+}
+
+void strlab_capitalize(strlab_string str) {
+    char *strbuf = strlab_getbuf(str);
+    for(size_t n = 0; n < str->len; n++) {
+        strbuf[n] = toupper((unsigned char)strbuf[n]);
     }
 }
 
-void strlab_append(strlab_string string, const char *dat) {
-    size_t len = strlen(dat);
-    int res = strlab_string_append(string, dat, len);
-    if(res != 0) {
-        errno = res;
-        STRLAB_ERROR(strlab_append);
+void strlab_lowercase(strlab_string str) {
+    char *strbuf = strlab_getbuf(str);
+    for(size_t n = 0; n < str->len; n++) {
+        strbuf[n] = tolower((unsigned char)strbuf[n]);
     }
 }
 
-void strlab_putchar(strlab_string string, char chr) {
-    int res = strlab_string_ensure(string, string->len + 2);
-    if(res != 0) {
-        errno = res;
-        STRLAB_ERROR(strlab_putchar);
-        return;
+int strlab_foreach(strlab_string str, int (*callback)(char*, size_t, void*), void *args) {
+    char *strbuf = strlab_getbuf(str);
+
+    for(size_t n = 0; n < str->len; n++) {
+        int error = callback(strbuf + n, n, args);
+        if(error) return error;
     }
 
-    char *dest = strlab_string_dat(string);
-    dest[string->len++] = chr;
+    return STRLAB_SUCCESS;
 }
 
-void strlab_substr(strlab_string string, size_t index, size_t length) {
-    if(index > string->len) return;
-
-    if(index + length >= string->len) {
-        length = string->len - index;
-    }
-
-    char *dat = strlab_string_dat(string);
-    memmove(dat, dat + index, length);
-
-    dat[length] = '\0';
-    string->len = length;
-}
-
-void strlab_freplace(strlab_string string, const char *old, const char *new) {
-    size_t oldlen = strlen(old);
-    size_t newlen = strlen(new);
-
-    int res = strlab_string_pos_replace(string, old, oldlen, new, newlen, memmem);
-    if(res != 0) {
-        errno = res;
-        STRLAB_ERROR(strlab_freplace);
-    }
-}
-
-void strlab_lreplace(strlab_string string, const char *old, const char *new) {
-    size_t oldlen = strlen(old);
-    size_t newlen = strlen(new);
-
-    int res = strlab_string_pos_replace(string, old, oldlen, new, newlen, strlab_string_memrmem);
-    if(res != 0) {
-        errno = res;
-        STRLAB_ERROR(strlab_lreplace);
-    }
-}
-
-size_t strlab_replace(strlab_string string, const char *old, const char *new) {
-    size_t oldlen = strlen(old);
-    size_t newlen = strlen(new);
-    size_t count = 0; 
-
-    int res = strlab_string_replace(&count, string, old, oldlen, new, newlen);
-    if(res != 0) {
-        errno = res;
-        STRLAB_ERROR(strlab_replace);
-    }
-    return count;
-}
-
-void strlab_resize(strlab_string string, size_t size) {
-    int res = strlab_string_ensure(string, size);
-    if(res != 0) {
-        errno = ENOMEM;
-        STRLAB_ERROR(strlab_resize);
-    }
-}
-
-int strlab_charat(const strlab_string string, size_t index) {
-    if(index >= string->len) return EOF;
-    char *dat = strlab_string_dat(string);
-    return dat[index];
-}
-
-void strlab_setchar(strlab_string string, size_t index, int c) {
-    if(index >= string->len || !isascii(c) ) return;
-    char *dat = strlab_string_dat(string);
-    dat[index] = c;
-}
-
-void strlab_trim(strlab_string string) {
-    char *dat = strlab_string_dat(string);
-
-    size_t tail = 0;
-    while(isspace(dat[tail])) tail++;
-
-    size_t head = 0;
-
-    if(tail != string->len) {
-        while(isspace(dat[string->len - head - 1])) head++;
-    }
-    
-    size_t newlen = string->len - tail - head;
-
-    memmove(dat, dat + tail, newlen);
-    dat[newlen] = '\0';
-    string->len = newlen;
-}
-
-void strlab_capitalize(strlab_string string) {
-    char *dat = strlab_string_dat(string);
-
-    for(size_t n = 0; n < string->len; n++) {
-        dat[n] = toupper(dat[n]);
-    }
-}
-
-void strlab_lower(strlab_string string) {
-    char *dat = strlab_string_dat(string);
-
-    for(size_t n = 0; n < string->len; n++) {
-        dat[n] = tolower(dat[n]);
-    }
-}
-
-void strlab_map(strlab_string string, int (*callback)(int, size_t, void*), void *args) {
-    char *dat = strlab_string_dat(string);
-
-    for(size_t n = 0; n < string->len; n++) {
-        int c = callback(dat[n], n, args);
-        if(c == EOF) break;
-        dat[n] = c;
-    }
-}
-
-void strlab_printf(strlab_string string, const char *format, ...) {
+int strlab_printf(strlab_string str, const char *format, ...) {
     va_list args, copy;
     va_start(args, format);
 
@@ -388,378 +428,221 @@ void strlab_printf(strlab_string string, const char *format, ...) {
 
     if(ilen < 0) {
         va_end(args);
-        errno = EILSEQ;
-        STRLAB_ERROR(strlab_printf);
-        return;
+        return STRLAB_PRINTF_ERROR;
     }
 
     size_t len = (size_t)(ilen);
-    size_t size = string->len + len + 1;
+    size_t size = str->len + 1;
 
-    int res = strlab_string_ensure(string, size);
-    if(res != 0) {
+    int error = strlab_ensure_size(str, size);
+    if(error) {
         va_end(args);
-        errno = res;
-        STRLAB_ERROR(strlab_printf);
-        return;
+        return error;
     }
 
-    char *dat = strlab_string_dat(string);
-    int error = vsnprintf(dat + string->len, len + 1, format, args) < 0;
+    char *strbuf = strlab_getbuf(str);
+    error = vsnprintf(strbuf, size, format, args) < 0;
     va_end(args);
 
-    if(error) {
-        errno = EILSEQ;
-        STRLAB_ERROR(strlab_printf);
-        return;
-    }
+    if(error) return STRLAB_PRINTF_ERROR;
+    str->len = len;
 
-    string->len += len;
+    return STRLAB_SUCCESS;
 }
 
-int strlab_scanf(const strlab_string string, const char *format, ...) {
+int strlab_scanf(const strlab_string str, const char *format, ...) {
     va_list args;
     va_start(args, format);
 
-    const char *dat = strlab_string_dat(string);
-    int res = vsscanf(dat, format, args);
+    const char *strbuf = strlab_getbuf(str);
+    int count = vsscanf(strbuf, format, args);
 
     va_end(args);
-    return res;
+    if(count <= 0) return STRLAB_SCANF_ERROR;
+    return STRLAB_SUCCESS;
 }
 
-char *strlab_drop(strlab_string string) {
-    if(strlab_string_little(string)) {
-        char *dat = STRLAB_MALLOC(string->len + 1);
-        if(!dat) {
-            errno = ENOMEM;
-            STRLAB_ERROR(strlab_drop);
-            return NULL;
-        }
+char* strlab_relase(strlab_string str) {
+    size_t size = str->len + 1;
+    char *raw = STRLAB_MALLOC(size);
+    if(!raw) return NULL;
 
-        memcpy(dat, string->dat, string->len + 1);
-        return dat;
+    const char *buf = strlab_getbuf(str);
+    memcpy(raw, buf, size);
+
+    if(strlab_free_struct(str)) {
+        STRLAB_FREE(raw);
+        return NULL;
     }
 
-    return string->dat;
+    return raw;
 }
 
-size_t strlab_split(strlab_string **list, const strlab_string string, const char *delim) {
-    const char *base = strlab_string_dat(string);
-    const char *end = base + string->len;
-    const char *ptr = base;
-    const char *term = NULL;
-
-    size_t dellen = strlen(delim);
-    if(dellen == 0) return 0;
-
-    size_t lstlen = 0;
-    size_t lstsiz = 0;
-
-    while(1) {
-        size_t n = string->len - (ptr - base);
-        term = memmem(ptr, n, delim, dellen);
-        if(!term) term = end;
-
-        if(lstlen >= lstsiz) {
-            size_t newsiz = strlab_round_size(lstsiz + 1);
-
-            strlab_string *newlst = STRLAB_MALLOC(newsiz * sizeof(strlab_string));
-            if(!newlst) {
-                errno = ENOMEM;
-                STRLAB_ERROR(slbdsplt);
-                goto freelist;
-            }
-
-            if(*list) {
-                memcpy(newlst, *list, lstlen * sizeof(strlab_string));
-                STRLAB_FREE(*list);
-            }
-
-            lstsiz = newsiz;
-            *list = newlst;
-        }
-
-        strlab_string *elem = &(*list)[lstlen++];
-        strlab_string_create(*elem);
-
-        size_t len = term - ptr;
-        if(strlab_string_copy(*elem, ptr, len)) {
-            errno = ENOMEM;
-            STRLAB_ERROR(strlab_split);
-            goto freelist;
-        }
-
-        if(term == end) break;
-        ptr = term + dellen;
-    }
-
-    return lstlen;
-
-    freelist:
-    if(!*list) return 0;
-    for(size_t n = 0; n < lstlen; n++) {
-        strlab_string_delete(*list[n]);
-    }
-    STRLAB_FREE(*list);
-    return 0;
-}
-
-size_t strlab_split_into(strlab_string *list, size_t size, const strlab_string string, const char *delim, int defined) {
-    const char *base = strlab_string_dat(string);
-    const char *end = base + string->len;
-    const char *ptr = base;
-    const char *term = NULL;
-
-    size_t dellen = strlen(delim);
-    if(dellen == 0) return 0;
-
-    size_t lstlen = 0;
-
-    while(1) {
-        size_t n = string->len - (ptr - base);
-        term = memmem(ptr, n, delim, dellen);
-        if(!term) term = end;
-
-        if(lstlen >= size) break;
-
-        strlab_string *elem = &list[lstlen++];
-        if(!defined) strlab_string_create(*elem);
-
-        size_t len = term - ptr;
-        if(strlab_string_copy(*elem, ptr, len)) {
-            errno = ENOMEM;
-            STRLAB_ERROR(strlab_split_into);
-            goto freelist;
-        }
-
-        if(term == end) break;
-        ptr = term + dellen;
-    }
-
-    return lstlen;
-
-    freelist:
-    if(defined) return 0;
-    for(size_t n = 0; n < lstlen; n++) {
-        strlab_string_delete(list[n]);
-    }
-    return 0;
-}
-
-void strlab_join(strlab_string string, const strlab_string *list, size_t nel, const char *sep) {
-    size_t seplen = strlen(sep);
-
-    for(size_t n = 0; n < nel; n++) {
-        const strlab_string *elem = &list[n];
-
-        if(n != 0) {
-            if(strlab_string_append(string, sep, seplen)) {
-                errno = ENOMEM;
-                STRLAB_ERROR(strlab_join);
-                return;
-            }
-        }
-
-        char *dat = strlab_string_dat(*elem);
-        if(strlab_string_append(string, dat, (*elem)->len)) {
-            errno = ENOMEM;
-            STRLAB_ERROR(strlab_join);
-            return;
-        }
-    }
-}
-
-void strlab_work(strlab_string string, void (*wdat)(char*, size_t*), size_t ensure) {
-    if(strlab_string_ensure(string, ensure)) {
-        errno = ENOMEM;
-        STRLAB_ERROR(strlab_work);
-        return;
-    }
-
-    char *dat = strlab_string_dat(string);
-    wdat(dat, &string->len);
-}
-
-void strlab_fgetln(strlab_string string, FILE *file) {
-    int c = 0;
-
-    while((c = fgetc(file)) != EOF) {
-        char ch = c;
-        if(strlab_string_append(string, &ch, 1)) {
-            errno = ENOMEM;
-            STRLAB_ERROR(slbline);
-            break;
-        }
-
-        if(c == '\n') break;
-    }
-}
-
-void strlab_fread(strlab_string string, FILE *file) {
-    int c = 0;
+size_t strlab_count(const strlab_string str, const strlab_string sub) {
+    const char *ptr = strlab_getbuf(str);
+    const char *endbuf = ptr + str->len;
     
-    while((c = fgetc(file)) != EOF) {
-        char ch = c;
-        if(strlab_string_append(string, &ch, 1)) {
-            errno = ENOMEM;
-            STRLAB_ERROR(slbread);
-            break;
-        }
-    }
-}
-
-void strlab_fwrite(FILE *file, const strlab_string string) {
-    const char *dat = strlab_string_dat(string);
-    if(fputs(dat, file) == EOF) {
-        STRLAB_ERROR(strlab_fwrite);
-        return;
-    }
-}
-
-size_t strlab_tokenize(strlab_string **list, const strlab_string string, const char *delim) {
-    const char *base = strlab_string_dat(string);
-    const char *end = base + string->len;
-    const char *ptr = base;
-    const char *term = NULL;
-
-    size_t dellen = strlen(delim);
-    if(dellen == 0) return 0;
-
-    size_t lstlen = 0;
-    size_t lstsiz = 0;
-
-    while(1) {
-        term = strpbrk(ptr, delim);
-        if(!term) term = end;
-
-        if(lstlen >= lstsiz) {
-            size_t newsiz = strlab_round_size(lstsiz + 1);
-
-            strlab_string *newlst = STRLAB_MALLOC(newsiz * sizeof(strlab_string));
-            if(!newlst) {
-                errno = ENOMEM;
-                STRLAB_ERROR(strlab_tokenize);
-                goto freelist;
-            }
-
-            if(*list) {
-                memcpy(newlst, *list, lstlen * sizeof(strlab_string));
-                STRLAB_FREE(*list);
-            }
-
-            lstsiz = newsiz;
-            *list = newlst;
-        }
-
-        strlab_string *elem = &(*list)[lstlen++];
-        strlab_string_create(*elem);
-
-        size_t len = term - ptr;
-        if(strlab_string_copy(*elem, ptr, len)) {
-            errno = ENOMEM;
-            STRLAB_ERROR(strlab_tokenize);
-            goto freelist;
-        }
-
-        if(term == end) break;
-
-        ptr = term + 1;
-        while(memchr(delim, *ptr, dellen)) ptr++;
-    }
-
-    return lstlen;
-
-    freelist:
-    if(!*list) return 0;
-    for(size_t n = 0; n < lstlen; n++) {
-        strlab_string_delete(*list[n]);
-    }
-    STRLAB_FREE(*list);
-    return 0;
-}
-
-size_t strlab_tokenize_into(strlab_string *list, size_t size, const strlab_string string, const char *delim, int defined) {
-    const char *base = strlab_string_dat(string);
-    const char *end = base + string->len;
-    const char *ptr = base;
-    const char *term = NULL;
-
-    size_t dellen = strlen(delim);
-    if(dellen == 0) return 0;
-
-    size_t lstlen = 0;
-
-    while(1) {
-        term = strpbrk(ptr, delim);
-        if(!term) term = end;
-
-        if(lstlen >= size) break;
-
-        strlab_string *elem = &list[lstlen++];
-        if(!defined) strlab_string_create(*elem);
-
-        size_t len = term - ptr;
-        if(strlab_string_copy(*elem, ptr, len)) {
-            errno = ENOMEM;
-            STRLAB_ERROR(strlab_tokenize);
-            goto freelist;
-        }
-
-        if(term == end) break;
-
-        ptr = term + 1;
-        while(memchr(delim, *ptr, dellen)) ptr++;
-    }
-
-    return lstlen;
-
-    freelist:
-    if(defined) return 0;
-    for(size_t n = 0; n < lstlen; n++) {
-        strlab_string_delete(list[n]);
-    }
-    return 0;
-}
-
-size_t strlab_count(const strlab_string string, const char *substr) {
-    const char *base = strlab_string_dat(string);
-    const char *end = base + string->len;
-
-    const char *ptr = base;
+    const char *subbuf = strlab_getbuf(sub);
     size_t count = 0;
-    size_t sublen = strlen(substr);
 
-    while((ptr = memmem(ptr, end - ptr, substr, sublen))) {
+    while((ptr = memmem(ptr, endbuf - ptr, sub, sub->len))) {
         count++;
-        ptr += sublen;
+        ptr += sub->len;
     }
 
     return count;
 }
 
-int strlab_startswith(const strlab_string string, const char *substr) {
-    size_t sublen = strlen(substr);
-    if(sublen > string->len) return 0;
+int strlab_startswith(const strlab_string str, const strlab_string sub) {
+    if(sub->len > str->len) return 0;
 
-    const char *dat = strlab_string_dat(string);
-    return memcmp(dat, substr, sublen);
+    const char *strbuf = strlab_getbuf(str);
+    const char *subbuf = strlab_getbuf(sub);
+    return memcmp(strbuf, subbuf, sub->len) == 0;
 }
 
-int strlab_endswith(const strlab_string string, const char *substr) {
-    size_t sublen = strlen(substr);
-    if(sublen > string->len) return 0;
+int strlab_endswith(const strlab_string str, const strlab_string sub) {
+    if(sub->len > str->len) return 0;
 
-    const char *dat = strlab_string_dat(string);
-    size_t diff = string->len - sublen;
-
-    return memcmp(dat - diff, substr, sublen) == 0;
+    const char *endbuf = strlab_getbuf(str);
+    const char *subbuf = strlab_getbuf(sub);
+    return memcmp(endbuf - sub->len, subbuf, sub->len) == 0;
 }
 
-size_t strlab_search(const strlab_string string, const char *substr) {
-    const char *dat = strlab_string_dat(string);
+int strlab_fgetln(strlab_string str, FILE *src) {
+    char buf[1024];
+    size_t total = 0;
 
-    size_t sublen = strlen(substr);
-    const char *found = memmem(dat, string->len, substr, sublen);
-    return found - dat;
+    while(fgets(buf, sizeof(buf), src)) {
+        size_t buflen = strlen(buf);        
+        
+        int error = strlab_low_copy(str, total, buf, buflen);
+        if(error) return error;
+
+        total += buflen;
+
+        if(buf[buflen - 1] == '\n') break;
+    }
+
+    if(ferror(src)) return STRLAB_IO_ERROR;
+    return STRLAB_SUCCESS;
+}
+
+int strlab_fread(strlab_string str, FILE *src, size_t size) {
+    int error = strlab_ensure_size(str, size + 1);
+    if(error) return error;
+
+    char *strbuf = strlab_getbuf(str);
+
+    if(size == 0) {
+        strlab_clear_struct(str);
+        return STRLAB_SUCCESS;
+    }
+
+    size_t read = fread(strbuf, 1, size, src);
+    strbuf[read] = '\0';
+
+    if(read == 0) return STRLAB_IO_ERROR;
+    return STRLAB_SUCCESS;
+}
+
+int strlab_fwrite(FILE *dest, const strlab_string str) {
+    const char *strbuf = strlab_getbuf(str);
+    size_t writed = fwrite(strbuf, 1, str->len, dest);
+    if(writed == 0) return STRLAB_IO_ERROR;
+    return STRLAB_SUCCESS;
+}
+
+strlab_string *strlab_split(const strlab_string str, const strlab_string del) {
+    strlab_string *list = NULL;
+    size_t listsiz = 0;
+    size_t listlen = 0;
+
+    const char *strbuf = strlab_getbuf(str);
+    const char *delbuf = strlab_getbuf(del);
+
+    size_t offset = 0;
+    size_t start = 0;
+    int error = STRLAB_SUCCESS;
+
+    while(offset < str->len) {
+        offset = strlab_low_search(str, start, delbuf, del->len);
+        if(offset == STRLAB_NPOS) offset = str->len;
+
+        error = strlab_low_list_append(
+            &list, &listsiz, &listlen, strbuf + start, offset - start
+        );
+
+        if(error) break;
+
+        start = offset + del->len;
+    }
+
+    const char *fin = strlab_getbuf(STRLAB_LFIN);
+    int termineted = !strlab_low_list_append(
+        &list, &listsiz, &listlen, fin, STRLAB_LFIN->len
+    );
+
+    if(error || !termineted) {
+        for(size_t n = 0; n < listlen; n++) {
+            strlab_free_struct(list[n]);
+        }
+        if(list) STRLAB_FREE(list);
+        return NULL;
+    }
+
+    return list;
+}
+
+int strlab_join(strlab_string str, const strlab_string *const list) {
+    int error = STRLAB_SUCCESS;
+    strlab_string sep;
+
+    strlab_init_struct(sep);
+    error =  strlab_copy(sep, str);
+    if(error) return error;
+
+    strlab_clear_struct(str);
+
+    const char *sepbuf = strlab_getbuf(sep);
+    const char *finbuf = strlab_getbuf(STRLAB_LFIN);
+    size_t n = 0;
+
+    while(1) {
+        const strlab_string *val = &list[n];
+        const char *valbuf = strlab_getbuf(*val);
+        if(strcmp(valbuf, finbuf) == 0) break;
+
+        if(n > 0) {
+            error = strlab_low_copy(str, str->len, sepbuf, sep->len);
+            if(error) break;
+        }
+
+        error = strlab_low_copy(str, str->len, valbuf, (*val)->len);
+        if(error) break;
+
+        n++;
+    }
+
+    strlab_free_struct(sep);
+    return error;
+}
+
+int strlab_unlist(strlab_string *list) {
+    const char *finbuf = strlab_getbuf(STRLAB_LFIN);
+    int error = STRLAB_SUCCESS;
+    size_t n = 0;
+
+    while(1) {
+        strlab_string *val = &list[n];
+        const char *valbuf = strlab_getbuf(*val);
+        if(strcmp(valbuf, finbuf) == 0) break;
+        
+        error = error || strlab_free_struct(*val);
+        n++;
+    }
+
+    STRLAB_FREE(list);
+
+    return error;
 }

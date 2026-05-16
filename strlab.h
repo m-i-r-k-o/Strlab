@@ -10,6 +10,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #ifndef STRLAB_MALLOC
 #define STRLAB_MALLOC(siz) malloc(siz)
@@ -19,91 +20,136 @@
 #define STRLAB_FREE(ptr) free(ptr)
 #endif
 
-#ifndef STRLAB_ERROR
-#define STRLAB_ERROR(funcname) perror(#funcname)
+#ifndef STRLAB_SSO_SIZE
+#define STRLAB_SSO_SIZE 16
 #endif
 
-#ifndef STRLAB_SIZE
-#define STRLAB_SIZE 16
+#ifndef STRLAB_NPOS
+#define STRLAB_NPOS ((size_t)(-1))
 #endif
 
-#define strlab_const(str) {{sizeof(str) - 1, sizeof(str), str, {0}}}
+#ifndef STRLAB_LFIN
+#define STRLAB_LFIN (const strlab_string){{1, 2, NULL, {[0] = (char)0xFF, [1] = '\0'}, 0}}
+#endif
 
-typedef struct {
-    size_t len; /**< Lunghezza della stringa */
-    size_t size; /**< Gandezza del buffer utilizzato */
-    char *dat; /**< Puntatore alla memoria in caso di stringa grande */
-    char little[STRLAB_SIZE]; /**< Buffer piccolo per permettere l'SSO */
+#if STRLAB_SSO_SIZE < 2
+#error strlab: SSO size too small
+#endif
+
+#define strlab_expr(expr) (const strlab_string){{sizeof((expr)) - 1, sizeof((expr)), (expr), {0}, 0}}
+
+#define strlab_const(expr) {{sizeof((expr)) - 1, sizeof((expr)), (expr), {0}, 0}}
+
+#define strlab_create() {{0, STRLAB_SSO_SIZE, NULL, {0}, 1}}
+
+#define strlab_fixed(buf,siz) {{(buf)[0] = '\0', (siz), (buf), {0}, 0}}
+
+enum {
+    STRLAB_SUCCESS = 0,
+    STRLAB_MAX_SIZE_REACHED,
+    STRLAB_OUT_OF_MEMORY,
+    STRLAB_OUT_OF_RANGE,
+    STRLAB_INVALID_CHAR,
+    STRLAB_FREE_ON_FIXED,
+    STRLAB_PRINTF_ERROR,
+    STRLAB_SCANF_ERROR,
+    STRLAB_IO_ERROR,
+};
+
+typedef struct strlab_string_struct {
+    size_t len;
+    size_t size;
+    char *dat;
+    char little[STRLAB_SSO_SIZE];
+    uint8_t dynamic;
 } strlab_string[1];
 
-void strlab_create(strlab_string string);
+void strlab_init(strlab_string string);
 
-void strlab_delete(strlab_string string);
+int strlab_free(strlab_string string);
+
+void strlab_attach(strlab_string string, char *buf, size_t size);
+
+void strlab_log(const strlab_string string);
 
 void strlab_clear(strlab_string string);
 
-int strlab_empty(const strlab_string string);
+int strlab_isempty(const strlab_string string);
 
 size_t strlab_length(const strlab_string string);
 
 const char *strlab_cstring(const strlab_string string);
 
-void strlab_copy(strlab_string string, const char *dat);
+int strlab_greater(const strlab_string string1, const strlab_string string2);
 
-void strlab_append(strlab_string string, const char *dat);
+int strlab_equals(const strlab_string string1, const strlab_string string2);
 
-void strlab_putchar(strlab_string string, char chr);
+int strlab_less(const strlab_string string1, const strlab_string string2);
 
-void strlab_substr(strlab_string string, size_t index, size_t length);
+int strlab_compare(const strlab_string string1, const strlab_string string2);
 
-void strlab_freplace(strlab_string string, const char *old, const char *new);
+int strlab_copy(strlab_string string, const strlab_string other);
 
-void strlab_lreplace(strlab_string string, const char *old, const char *new);
+int strlab_insert(strlab_string string, size_t index, const strlab_string other);
 
-size_t strlab_replace(strlab_string string, const char *old, const char *new);
+int strlab_append(strlab_string string, const strlab_string other);
 
-void strlab_resize(strlab_string string, size_t size);
+int strlab_erase(strlab_string string, size_t index, size_t length);
 
-int strlab_charat(const strlab_string string, size_t index);
+int strlab_putchar(strlab_string string, int chr);
 
-void strlab_setchar(strlab_string string, size_t index, int c);
+int strlab_substr(strlab_string string, size_t index, size_t length);
 
-void strlab_trim(strlab_string string);
+int strlab_repalce(strlab_string string, const strlab_string old, const strlab_string new);
+
+int strlab_rchange(strlab_string string, const strlab_string old, const strlab_string new);
+
+int strlab_lchange(strlab_string string, const strlab_string old, const strlab_string new);
+
+int strlab_ensure(strlab_string string, size_t size);
+
+size_t strlab_search(const strlab_string string, const strlab_string substr);
+
+const char *strlab_lfind(const strlab_string string, const strlab_string substr);
+
+const char *strlab_rfind(const strlab_string string, const strlab_string substr);
+
+int strlab_index(const strlab_string string, size_t index);
+
+char *strlab_offset(strlab_string string, size_t index);
+
+int strlab_strip(strlab_string string, const strlab_string set);
 
 void strlab_capitalize(strlab_string string);
 
-void strlab_lower(strlab_string string);
+void strlab_lowercase(strlab_string string);
 
-void strlab_map(strlab_string string, int (*callback)(int, size_t, void*), void *args);
+int strlab_foreach(strlab_string string, int (*callback)(char*, size_t, void*), void *args);
 
-void strlab_printf(strlab_string string, const char *format, ...);
+int strlab_printf(strlab_string string, const char *format, ...);
 
 int strlab_scanf(const strlab_string string, const char *format, ...);
 
-char *strlab_drop(strlab_string string);
+char* strlab_relase(strlab_string string);
 
-size_t strlab_split(strlab_string **list, const strlab_string string, const char *delim);
+size_t strlab_count(const strlab_string str, const strlab_string sub);
 
-size_t strlab_split_into(strlab_string *list, size_t size, const strlab_string string, const char *delim, int definded);
+int strlab_startswith(const strlab_string str, const strlab_string sub);
 
-void strlab_join(strlab_string string, const strlab_string *list, size_t nel, const char *sep);
+int strlab_endswith(const strlab_string str, const strlab_string sub);
 
-void strlab_work(strlab_string string, void (*wdat)(char*, size_t*), size_t ensure);
+int strlab_fgetln(strlab_string str, FILE *src);
 
-void strlab_fgetln(strlab_string string, FILE *file);
+int strlab_fread(strlab_string str, FILE *src, size_t size);
 
-void strlab_fread(strlab_string string, FILE *file);
+int strlab_fwrite(FILE *dest, const strlab_string str);
 
-void strlab_fwrite(FILE *file, const strlab_string string);
+strlab_string *strlab_split(const strlab_string str, const strlab_string del);
 
-size_t strlab_tokenize(strlab_string **list, const strlab_string string, const char *delim);
+int strlab_join(strlab_string str, const strlab_string *const list);
 
-size_t strlab_tokenize_into(strlab_string *list, size_t size, const strlab_string string, const char *delim, int defined);
+int strlab_unlist(strlab_string *list);
 
-size_t strlab_count(const strlab_string string, const char *substr);
-
-int strlab_startswith(const strlab_string string, const char *substr);
-
-int strlab_endswith(const strlab_string string, const char *substr);
+int strlab_expandtabs(strlab_string str, size_t n);
 
 #endif
