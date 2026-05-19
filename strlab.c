@@ -215,7 +215,7 @@ void strlab_create(strlab_struct *str) {
     strlab_init_struct(str);
 }
 
-int strlab_free(strlab_struct *str) {
+int strlab_close(strlab_struct *str) {
     return strlab_free_struct(str);
 }
 

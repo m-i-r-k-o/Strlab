@@ -55,7 +55,7 @@ extern const strlab_string STRLAB_LFIN;
 
 void strlab_create(strlab_struct *str);
 
-int strlab_free(strlab_struct *str);
+int strlab_close(strlab_struct *str);
 
 void strlab_fixed(strlab_struct *str, char *buf, size_t size);
 
