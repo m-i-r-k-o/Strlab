@@ -624,7 +624,3 @@ int strlab_unlist(strlab_string *list) {
 
     return error;
 }
-
-const strlab_string STRLAB_LFIN = {
-    {1, 2, (char[2]){[0] = (char)(0xFF), [1] = '\0'}, {0}, 0}
-};

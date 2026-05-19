@@ -28,7 +28,11 @@
 #define STRLAB_NPOS ((size_t)(-1))
 #endif
 
-#define strlab_expr(expr) (const strlab_string){{sizeof((expr)) - 1, sizeof((expr)), (expr), {0}, 0}}
+#ifndef STRLAB_LFIN
+#define STRLAB_LFIN (const strlab_string){{1, 2, (char[2]){(char)(0xFF), '\0'}, {0}, 0}}
+#endif
+
+#define strlab_expr(expr) ((const strlab_string){{sizeof((expr)) - 1, sizeof((expr)), (expr), {0}, 0}})
 
 #define strlab_const(expr) {{sizeof((expr)) - 1, sizeof((expr)), (expr), {0}, 0}}
 
@@ -43,15 +47,21 @@ enum {
     STRLAB_NOT_FOUND
 };
 
-typedef struct strlab_string_struct {
+struct strlab_string_struct {
     size_t len;
     size_t size;
     char *buf;
     char little[STRLAB_SSO_SIZE];
     uint8_t dynamic;
-} strlab_string[1], strlab_struct;
+};
 
-extern const strlab_string STRLAB_LFIN;
+typedef struct strlab_string_struct strlab_string[1];
+
+typedef struct strlab_string_struct strlab_struct;
+
+typedef struct strlab_string_struct *strlab_pointer;
+
+typedef const struct strlab_string_struct *strlab_const_pointer;
 
 void strlab_create(strlab_struct *str);
 
