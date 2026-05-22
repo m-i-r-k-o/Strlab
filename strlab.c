@@ -5,8 +5,18 @@
 #include <ctype.h>
 #include <stdarg.h>
 
+/**
+ * @brief Macro per trovare il piu' grande tra due valori
+ * @param a Primo valore
+ * @param b Secondo valore
+ */
 #define strlab_max(a,b) (((a) > (b)) ? (a) : (b))
 
+/**
+ * @brief Funzione per ingrandire una grandezza
+ * @param size Grandezza inizale
+ * @return Grandezza ingrandita
+ */
 static inline size_t strlab_round_size(size_t size) {
     if(size == 0) return 1;
     size--;
@@ -20,7 +30,12 @@ static inline size_t strlab_round_size(size_t size) {
     return size + 1;
 }
 
-static inline void strlab_init_struct(strlab_struct *str) {
+/**
+ * @internal
+ * @brief Funzione per inizializzare una stringa
+ * @param str Stringa da inizializzare
+ */
+static inline void strlab_init_struct(strlab_pointer str) {
     str->len = 0;
     str->size = STRLAB_SSO_SIZE;
     str->buf = str->little;
@@ -28,18 +43,36 @@ static inline void strlab_init_struct(strlab_struct *str) {
     str->buf[0] = '\0';
 }
 
-static inline int strlab_free_struct(strlab_struct *str) {
+/**
+ * @internal
+ * @brief Funzione per liberare la memoria allocata da una stringa
+ * @param str Stringa da cancellare
+ * @return Codice di ritorno
+ */
+static inline int strlab_free_struct(strlab_pointer str) {
     if(!str->dynamic) return STRLAB_FREE_ON_FIXED;
     if(str->size > STRLAB_SSO_SIZE) STRLAB_FREE(str->buf);
     return STRLAB_SUCCESS;
 }
 
-static inline void strlab_clear_struct(strlab_struct *str) {
+/**
+ * @internal
+ * @brief Funzione per svuotare il buffer di una stringa
+ * @param str Stringa da svuotare
+ */
+static inline void strlab_clear_struct(strlab_pointer str) {
     str->buf[0] = '\0';
     str->len = 0;
 }
 
-static inline int strlab_swap_and_destroy(strlab_struct *destroy, strlab_struct *dest) {
+/**
+ * @internal
+ * @brief Funzione per copiare una stringa temporanea in un altra e distruggere la stringa temporanea
+ * @param destroy Stringa temporanea
+ * @param dest Stringa di destinazione
+ * @return Codice di ritorno
+ */
+static inline int strlab_swap_and_destroy(strlab_pointer destroy, strlab_pointer dest) {
     if(!dest->dynamic) {
         if(destroy->len > dest->len) return STRLAB_MAX_SIZE_REACHED;
         memcpy(dest->buf, destroy->buf, destroy->len);
@@ -62,7 +95,14 @@ static inline int strlab_swap_and_destroy(strlab_struct *destroy, strlab_struct 
     return STRLAB_SUCCESS;
 }
 
-static int strlab_ensure_size(strlab_struct *str, size_t request) {
+/**
+ * @internal
+ * @brief Funzione per ingrandire il buffer di una stringa
+ * @param str Stringa da ingrandire
+ * @param request Grandezza richiesta
+ * @return Codice di ritorno
+ */
+static int strlab_ensure_size(strlab_pointer str, size_t request) {
     if(str->size >= request) return STRLAB_SUCCESS;
     if(!str->dynamic) return STRLAB_MAX_SIZE_REACHED;
 
@@ -80,7 +120,16 @@ static int strlab_ensure_size(strlab_struct *str, size_t request) {
     return STRLAB_SUCCESS;
 }
 
-static int strlab_copy_offset(strlab_struct *str, size_t offset, const char *src, size_t srclen) {
+/**
+ * @internal
+ * @brief Funzione per copiare una stringa C in una stringa
+ * @param str Stringa di destinazione
+ * @param offset Posizone di inizio della copia
+ * @param src Stringa di origine
+ * @param srclen Lunghezza della stringa di origine
+ * @return Codice di ritorno
+ */
+static int strlab_copy_offset(strlab_pointer str, size_t offset, const char *src, size_t srclen) {
     if(offset > str->len) return STRLAB_OUT_OF_RANGE;
     if(srclen == 0) return STRLAB_SUCCESS;
 
@@ -97,7 +146,16 @@ static int strlab_copy_offset(strlab_struct *str, size_t offset, const char *src
     return STRLAB_SUCCESS;
 }
 
-static int strlab_fill_offset(strlab_struct *str, size_t offset, int fill, size_t space) {
+/**
+ * @internal
+ * @brief Funzione per riempire un stringa con lo stesso carattere
+ * @param str Stringa di destinazione
+ * @param offset Posizione di inizio della copia
+ * @param fill Carattere con cui riempire la stringa
+ * @param space Numero di caratteri da copiare
+ * @return Codice di ritorno
+ */
+static int strlab_fill_offset(strlab_pointer str, size_t offset, int fill, size_t space) {
     if(offset > str->len) return STRLAB_OUT_OF_RANGE;
     if(space == 0) return STRLAB_SUCCESS;
 
@@ -114,7 +172,15 @@ static int strlab_fill_offset(strlab_struct *str, size_t offset, int fill, size_
     return STRLAB_SUCCESS;
 }
 
-static int strlab_remove_offset(strlab_struct *str, size_t offset, size_t torm) {
+/**
+ * @internal
+ * @brief Funzione per cancellare dei caratteri da una stringa
+ * @param str Stringa da modificare
+ * @param offset Posizione di inizio della cancellazione
+ * @param torm Numero di caratteri da rimuovere
+ * @return Codice di ritorno
+ */
+static int strlab_remove_offset(strlab_pointer str, size_t offset, size_t torm) {
     if(offset > str->len) return STRLAB_OUT_OF_RANGE;
     if(torm == 0) return STRLAB_SUCCESS;
 
@@ -127,7 +193,16 @@ static int strlab_remove_offset(strlab_struct *str, size_t offset, size_t torm) 
     return STRLAB_SUCCESS;
 }
 
-static int strlab_shift_offset(strlab_struct *str, size_t offset, size_t oldlen, size_t newlen) {
+/**
+ * @interface
+ * @brief Funzione per modificare la spazio necessario per inserire una sottostringa al posto di un altra in una stringa
+ * @param str Stringa da modificare
+ * @param offset Posizione di inizio della modifica
+ * @param oldlen Lunghezza della vecchia sottostringa
+ * @param newlen Lunghezza della nuova sottostringa
+ * @return Codice di errore
+ */
+static int strlab_shift_offset(strlab_pointer str, size_t offset, size_t oldlen, size_t newlen) {
     if(offset > str->len) return STRLAB_OUT_OF_RANGE;
 
     size_t len = str->len - oldlen + newlen;
@@ -145,9 +220,16 @@ static int strlab_shift_offset(strlab_struct *str, size_t offset, size_t oldlen,
     return STRLAB_SUCCESS;
 }
 
-static size_t strlab_search_offset(
-    const strlab_struct *str, size_t offset, const char *target, size_t tarlen
-) {
+/**
+ * @internal
+ * @brief Funzione per cercare una sottostirnga in una stringa
+ * @param str Stringa base
+ * @param offset Posizione di inizio della ricerca
+ * @param target Sottostringa da cercare
+ * @param tarlen Lunghezza della sottostringa
+ * @return Posizione della sottostringa nella stringa se viene trovata, altrimenti STRLAB_NPOS
+ */
+static size_t strlab_search_offset(strlab_const_pointer str, size_t offset, const char *target, size_t tarlen) {
     if(offset > str->len) return STRLAB_NPOS;
     if(tarlen > str->len) return STRLAB_NPOS;
     if(tarlen == 0) return STRLAB_NPOS;
@@ -160,7 +242,15 @@ static size_t strlab_search_offset(
     return (size_t)(found - str->buf);
 }
 
-static size_t strlab_search_backwards(const strlab_struct *str, const char *target, size_t tarlen) {
+/**
+ * @internal
+ * @brief Funzione per cercare una sottostringa in una stringa al contrario
+ * @param str Stringa base
+ * @param target Stringa da cercare
+ * @param tarlen Lunghezza della stringa da cercare
+ * @return Posizione della sottostringa nella stringa se viene trovata, altrimenti STRLAB_NPOS
+ */
+static size_t strlab_search_backwards(strlab_const_pointer str, const char *target, size_t tarlen) {
     if(tarlen > str->len) return STRLAB_NPOS;
     if(tarlen == 0) return STRLAB_NPOS;
     if(tarlen == str->len) return 0;
@@ -176,9 +266,17 @@ static size_t strlab_search_backwards(const strlab_struct *str, const char *targ
     return STRLAB_NPOS;
 }
 
-static int strlab_list_append(
-    strlab_string **list, size_t *size, size_t *len, const char *src, size_t srclen
-) {
+/**
+ * @internal
+ * @brief Funzione per inserire in cima ad una lista di stringhe una stringa
+ * @param list Puntatore alla lista di stringhe
+ * @param size Puntatore alla grandezza allocata della lista
+ * @param len Puntatore alla lunghezza della lista
+ * @param src Stringa da inserire nella lista
+ * @param strlen Lunghezza della stringa
+ * @return Codice di ritorno
+ */
+static int strlab_list_append(strlab_string **list, size_t *size, size_t *len, const char *src, size_t srclen) {
     if(*len >= *size) {
         size_t newsiz = strlab_round_size(*size + 1);
 
@@ -197,7 +295,7 @@ static int strlab_list_append(
         *size = newsiz;
     }
 
-    strlab_struct *elem = (*list)[*len];
+    strlab_pointer elem = (*list)[*len];
     strlab_init_struct(elem);
 
     int error = strlab_copy_offset(elem, 0, src, srclen);
@@ -211,15 +309,15 @@ static int strlab_list_append(
     return STRLAB_SUCCESS;
 }
 
-void strlab_create(strlab_struct *str) {
+void strlab_create(strlab_pointer str) {
     strlab_init_struct(str);
 }
 
-int strlab_close(strlab_struct *str) {
+int strlab_close(strlab_pointer str) {
     return strlab_free_struct(str);
 }
 
-void strlab_fixed(strlab_struct *str, char *buf, size_t size) {
+void strlab_fixed(strlab_pointer str, char *buf, size_t size) {
     str->len = strlen(buf);
     str->size = size;
     str->buf = buf;
@@ -227,52 +325,52 @@ void strlab_fixed(strlab_struct *str, char *buf, size_t size) {
     str->dynamic = 0;
 }
 
-void strlab_log(const strlab_struct *string) {
+void strlab_log(strlab_const_pointer str) {
     printf(
         "'%s' len=%zu size=%zu SSO=%s dynamic=%s\n",
-        string->buf, string->len, string->size,
-        (string->size <= STRLAB_SSO_SIZE) ? "True" : "False",
-        string->dynamic ? "True" : "Flase"
+        str->buf, str->len, str->size,
+        (str->size <= STRLAB_SSO_SIZE) ? "True" : "False",
+        str->dynamic ? "True" : "Flase"
     );
 }
 
-void strlab_clear(strlab_struct *str) {
+void strlab_clear(strlab_pointer str) {
     strlab_clear_struct(str);
 }
 
-int strlab_isempty(const strlab_struct *str) {
+int strlab_isempty(strlab_const_pointer str) {
     return str->buf[0] == '\0';
 }
 
-size_t strlab_length(const strlab_struct *str) {
+size_t strlab_length(strlab_const_pointer str) {
     return str->len;
 }
 
-const char *strlab_cstring(const strlab_struct *str) {
+const char *strlab_cstring(strlab_const_pointer str) {
     return str->buf;
 }
 
-int strlab_greater(const strlab_struct *str1, const strlab_struct *str2) {
+int strlab_greater(strlab_const_pointer str1, strlab_const_pointer str2) {
     return strcmp(str1->buf, str2->buf) > 0;
 }
 
-int strlab_equals(const strlab_struct *str1, const strlab_struct *str2) {
+int strlab_equals(strlab_const_pointer str1, strlab_const_pointer str2) {
     return str1->len == str2->len && memcmp(str1->buf, str2->buf, str1->len) == 0;
 }
 
-int strlab_less(const strlab_struct *str1, const strlab_struct *str2) {
+int strlab_less(strlab_const_pointer str1, strlab_const_pointer str2) {
     return strcmp(str1->buf, str2->buf) < 0;
 }
 
-int strlab_compare(const strlab_struct *str1, const strlab_struct *str2) {
+int strlab_compare(strlab_const_pointer str1, strlab_const_pointer str2) {
     return strcmp(str1->buf, str2->buf);
 }
 
-int strlab_copy(strlab_struct *str, const strlab_struct *other) {
+int strlab_copy(strlab_pointer str, strlab_const_pointer other) {
     return strlab_copy_offset(str, 0, other->buf, other->len);
 }
 
-int strlab_insert(strlab_struct *str, size_t index, const strlab_struct *other) {
+int strlab_insert(strlab_pointer str, size_t index, strlab_const_pointer other) {
     strlab_string last;
     strlab_init_struct(last);
     
@@ -284,21 +382,21 @@ int strlab_insert(strlab_struct *str, size_t index, const strlab_struct *other) 
     return error; 
 }
 
-int strlab_append(strlab_struct *str, const strlab_struct *other) {
+int strlab_append(strlab_pointer str, strlab_const_pointer other) {
     return strlab_copy_offset(str, str->len, other->buf, other->len);
 }
 
-int strlab_erase(strlab_struct *str, size_t index, size_t length) {
+int strlab_erase(strlab_pointer str, size_t index, size_t length) {
     return strlab_remove_offset(str, index, length);
 }
 
-int strlab_putchar(strlab_struct *str, int chr) {
+int strlab_putchar(strlab_pointer str, int chr) {
     if(!isascii(chr)) return STRLAB_INVALID_CHAR;
     char tmp = chr;
     return strlab_copy_offset(str, str->len, &tmp, 1);
 }
 
-int strlab_substr(strlab_struct *str, size_t index, size_t length) {
+int strlab_substr(strlab_pointer str, size_t index, size_t length) {
     int error = strlab_remove_offset(str, 0, index);
     if(!error) return error;
     str->len = length;
@@ -306,7 +404,7 @@ int strlab_substr(strlab_struct *str, size_t index, size_t length) {
     return error;
 }
 
-int strlab_repalce(strlab_struct *str, const strlab_struct *old, const strlab_struct *new) {
+int strlab_repalce(strlab_pointer str, strlab_const_pointer old, strlab_const_pointer new) {
     strlab_string result;
     strlab_init_struct(result);
 
@@ -334,7 +432,7 @@ int strlab_repalce(strlab_struct *str, const strlab_struct *old, const strlab_st
     return strlab_swap_and_destroy(result, str);
 }
 
-int strlab_rchange(strlab_struct *str, const strlab_struct *old, const strlab_struct *new) {
+int strlab_lchange(strlab_pointer str, strlab_const_pointer old, strlab_const_pointer new) {
     size_t newlen = new ? new->len : 0;
     const char *newbuf = new ? new->buf : "";
 
@@ -348,7 +446,7 @@ int strlab_rchange(strlab_struct *str, const strlab_struct *old, const strlab_st
     return STRLAB_SUCCESS;
 }
 
-int strlab_lchange(strlab_struct *str, const strlab_struct *old, const strlab_struct *new) {
+int strlab_rchange(strlab_pointer str, strlab_const_pointer old, strlab_const_pointer new) {
     size_t newlen = new ? new->len : 0;
     const char *newbuf = new ? new->buf : "";
 
@@ -362,37 +460,37 @@ int strlab_lchange(strlab_struct *str, const strlab_struct *old, const strlab_st
     return STRLAB_SUCCESS;
 }
 
-int strlab_ensure(strlab_struct *str, size_t size) {
+int strlab_ensure(strlab_pointer str, size_t size) {
     return strlab_ensure_size(str, size);
 }
 
-size_t strlab_search(const strlab_struct *str, const strlab_struct *sub) {
+size_t strlab_search(strlab_const_pointer str, strlab_const_pointer sub) {
     return strlab_search_offset(str, 0, sub->buf, sub->len);
 }
 
-const char *strlab_lfind(const strlab_struct *str, const strlab_struct *sub) {
+const char *strlab_lfind(strlab_const_pointer str, strlab_const_pointer sub) {
     size_t index = strlab_search_offset(str, 0, sub->buf, sub->len);
     if(index == STRLAB_NPOS) return NULL;
     return str->buf + index;
 }
 
-const char *strlab_rfind(const strlab_struct *str, const strlab_struct *sub) {
+const char *strlab_rfind(strlab_const_pointer str, strlab_const_pointer sub) {
     size_t index = strlab_search_backwards(str, sub->buf, sub->len);
     if(index == STRLAB_NPOS) return NULL;
     return str->buf + index;
 }
 
-int strlab_charat(const strlab_struct *str, size_t index) {
+int strlab_charat(strlab_const_pointer str, size_t index) {
     if(index >= str->len) return EOF;
     return (unsigned char)(str->buf[index]);
 }
 
-char *strlab_index(strlab_struct *str, size_t index) {
+char *strlab_index(strlab_pointer str, size_t index) {
     if(index >= str->len) return NULL;
     return str->buf + index;
 }
 
-int strlab_strip(strlab_struct *str, const strlab_struct *set) {
+int strlab_strip(strlab_pointer str, strlab_const_pointer set) {
     const char *setbuf = set ? set->buf : " \f\n\r\t\v";
     size_t setlen = set ? set->len : strlen(setbuf);
 
@@ -413,19 +511,19 @@ int strlab_strip(strlab_struct *str, const strlab_struct *set) {
     return STRLAB_SUCCESS;
 }
 
-void strlab_capitalize(strlab_struct *str) {
+void strlab_capitalize(strlab_pointer str) {
     for(size_t n = 0; n < str->len; n++) {
         str->buf[n] = toupper((unsigned char)(str->buf[n]));
     }
 }
 
-void strlab_lowercase(strlab_struct *str) {
+void strlab_lowercase(strlab_pointer str) {
     for(size_t n = 0; n < str->len; n++) {
         str->buf[n] = tolower((unsigned char)(str->buf[n]));
     }
 }
 
-int strlab_foreach(strlab_struct *str, int (*callback)(char*, size_t, void*), void *args) {
+int strlab_foreach(strlab_pointer str, int (*callback)(char*, size_t, void*), void *args) {
     for(size_t n = 0; n < str->len; n++) {
         int error = callback(str->buf + n, n, args);
         if(error) return error;
@@ -433,7 +531,7 @@ int strlab_foreach(strlab_struct *str, int (*callback)(char*, size_t, void*), vo
     return STRLAB_SUCCESS;
 }
 
-int strlab_printf(strlab_struct *str, const char *format, ...) {
+int strlab_printf(strlab_pointer str, const char *format, ...) {
     va_list args, copy;
     va_start(args, format);
 
@@ -462,7 +560,7 @@ int strlab_printf(strlab_struct *str, const char *format, ...) {
     return ilen;
 }
 
-int strlab_scanf(const strlab_struct *str, const char *format, ...) {
+int strlab_scanf(strlab_const_pointer str, const char *format, ...) {
     va_list args;
     va_start(args, format);
     int count = vsscanf(str->buf, format, args);
@@ -470,7 +568,7 @@ int strlab_scanf(const strlab_struct *str, const char *format, ...) {
     return count;
 }
 
-char *strlab_relase(strlab_struct *str) {
+char *strlab_relase(strlab_pointer str) {
     if(!str->dynamic) return str->buf;
     if(str->size > STRLAB_SSO_SIZE) return str->buf;
 
@@ -479,7 +577,7 @@ char *strlab_relase(strlab_struct *str) {
     return memcpy(buf, str->buf, str->len + 1);
 }
 
-size_t strlab_count(const strlab_struct *str, const strlab_struct *sub) {
+size_t strlab_count(strlab_const_pointer str, strlab_const_pointer sub) {
     const char *ptr = str->buf;
     const char *end = ptr + str->len;
     size_t count = 0;
@@ -492,17 +590,17 @@ size_t strlab_count(const strlab_struct *str, const strlab_struct *sub) {
     return count;
 }
 
-int strlab_startswith(const strlab_struct *str, const strlab_struct *sub) {
+int strlab_startswith(strlab_const_pointer str, strlab_const_pointer sub) {
     if(sub->len > str->len) return 0;
     return memcmp(str->buf, sub->buf, str->len) == 0;
 }
 
-int strlab_endswith(const strlab_struct *str, const strlab_struct *sub) {
+int strlab_endswith(strlab_const_pointer str, strlab_const_pointer sub) {
     if(sub->len > str->len) return 0;
     return memcmp(str->buf + str->len - sub->len, sub->buf, sub->len) == 0;
 }
 
-int strlab_fgetln(strlab_struct *str, FILE *src) {
+int strlab_fgetln(strlab_pointer str, FILE *src) {
     char buf[1024];
     size_t total = 0;
 
@@ -521,7 +619,7 @@ int strlab_fgetln(strlab_struct *str, FILE *src) {
     return STRLAB_SUCCESS;
 }
 
-int strlab_fread(strlab_struct *str, FILE *src, size_t size) {
+int strlab_fread(strlab_pointer str, FILE *src, size_t size) {
     int error = strlab_ensure_size(str, size + 1);
     if(error) return error;
 
@@ -537,13 +635,13 @@ int strlab_fread(strlab_struct *str, FILE *src, size_t size) {
     return STRLAB_SUCCESS;
 }
 
-int strlab_fwrite(FILE *dest, const strlab_struct *str) {
+int strlab_fwrite(FILE *dest, strlab_const_pointer str) {
     size_t writed = fwrite(str->buf, 1, str->len, dest);
     if(writed) return STRLAB_SUCCESS;
     return STRLAB_IO_ERROR;
 }
 
-strlab_string *strlab_split(const strlab_struct *str, const strlab_struct *del) {
+strlab_string *strlab_split(strlab_const_pointer str, strlab_const_pointer del) {
     strlab_string *list = NULL;
     size_t listsiz = 0;
     size_t listlen = 0;
@@ -581,14 +679,14 @@ strlab_string *strlab_split(const strlab_struct *str, const strlab_struct *del) 
     return list;
 }
 
-int strlab_join(strlab_struct *str, const strlab_string *list) {
+int strlab_join(strlab_pointer str, const strlab_string *list) {
     int error = STRLAB_SUCCESS;
     strlab_string result;
     strlab_init_struct(result);
     size_t count = 0;
 
     while(1) {
-        const strlab_struct *val = list[count];
+        strlab_const_pointer val = list[count];
         if(strcmp(val->buf, STRLAB_LFIN->buf) == 0) break;
 
         if(count > 0) {
@@ -613,7 +711,7 @@ int strlab_unlist(strlab_string *list) {
     size_t count = 0;
 
     while(1) {
-        strlab_struct *val = list[count];
+        strlab_pointer val = list[count];
         if(strcmp(val->buf, STRLAB_LFIN->buf) == 0) break;
         
         error = error || strlab_free_struct(val);
