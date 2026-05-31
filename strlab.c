@@ -6,16 +6,16 @@
 #include <stdarg.h>
 
 /**
- * @brief Macro per trovare il piu' grande tra due valori
- * @param a Primo valore
- * @param b Secondo valore
+ * @brief Macro to find the larger of two values
+ * @param a First value
+ * @param b Second value
  */
 #define strlab_max(a,b) (((a) > (b)) ? (a) : (b))
 
 /**
- * @brief Funzione per ingrandire una grandezza
- * @param size Grandezza inizale
- * @return Grandezza ingrandita
+ * @brief Function to enlarge a quantity
+ * @param size Initial size
+ * @return Enlarged size
  */
 static inline size_t strlab_round_size(size_t size) {
     if(size == 0) return 1;
@@ -32,8 +32,8 @@ static inline size_t strlab_round_size(size_t size) {
 
 /**
  * @internal
- * @brief Funzione per inizializzare una stringa
- * @param str Stringa da inizializzare
+ * @brief Function to initialize a string
+ * @param str String to initialize
  */
 static inline void strlab_init_struct(strlab_pointer str) {
     str->len = 0;
@@ -45,9 +45,9 @@ static inline void strlab_init_struct(strlab_pointer str) {
 
 /**
  * @internal
- * @brief Funzione per liberare la memoria allocata da una stringa
- * @param str Stringa da cancellare
- * @return Codice di ritorno
+ * @brief Function to free memory allocated by a string
+ * @param str String to delete
+ * @return Return code
  */
 static inline int strlab_free_struct(strlab_pointer str) {
     if(!str->dynamic) return STRLAB_FREE_ON_FIXED;
@@ -57,8 +57,8 @@ static inline int strlab_free_struct(strlab_pointer str) {
 
 /**
  * @internal
- * @brief Funzione per svuotare il buffer di una stringa
- * @param str Stringa da svuotare
+ * @brief Function to empty the buffer of a string
+ * @param str String to empty
  */
 static inline void strlab_clear_struct(strlab_pointer str) {
     str->buf[0] = '\0';
@@ -67,10 +67,10 @@ static inline void strlab_clear_struct(strlab_pointer str) {
 
 /**
  * @internal
- * @brief Funzione per copiare una stringa temporanea in un altra e distruggere la stringa temporanea
- * @param destroy Stringa temporanea
- * @param dest Stringa di destinazione
- * @return Codice di ritorno
+ * @brief Function to copy a temporary string to another and destroy the temporary string
+ * @param destroy Temporary string
+ * @param dest Destination string
+ * @return Return code
  */
 static inline int strlab_swap_and_destroy(strlab_pointer destroy, strlab_pointer dest) {
     if(!dest->dynamic) {
@@ -97,10 +97,11 @@ static inline int strlab_swap_and_destroy(strlab_pointer destroy, strlab_pointer
 
 /**
  * @internal
- * @brief Funzione per ingrandire il buffer di una stringa
- * @param str Stringa da ingrandire
- * @param request Grandezza richiesta
- * @return Codice di ritorno
+ * @brief Function to enlarge the buffer of a string
+ * @param str String to enlarge
+ * @param request Requested size
+ * @return Return code
+ * @todo Realloc
  */
 static int strlab_ensure_size(strlab_pointer str, size_t request) {
     if(str->size >= request) return STRLAB_SUCCESS;
@@ -122,12 +123,12 @@ static int strlab_ensure_size(strlab_pointer str, size_t request) {
 
 /**
  * @internal
- * @brief Funzione per copiare una stringa C in una stringa
- * @param str Stringa di destinazione
- * @param offset Posizone di inizio della copia
- * @param src Stringa di origine
- * @param srclen Lunghezza della stringa di origine
- * @return Codice di ritorno
+ * @brief Function to copy a C string to a string
+ * @param str Destination string
+ * @param offset Start position of the copy
+ * @param src Source string
+ * @param srclen Length of the source string
+ * @return Return code
  */
 static int strlab_copy_offset(strlab_pointer str, size_t offset, const char *src, size_t srclen) {
     if(offset > str->len) return STRLAB_OUT_OF_RANGE;
@@ -148,12 +149,12 @@ static int strlab_copy_offset(strlab_pointer str, size_t offset, const char *src
 
 /**
  * @internal
- * @brief Funzione per riempire un stringa con lo stesso carattere
- * @param str Stringa di destinazione
- * @param offset Posizione di inizio della copia
- * @param fill Carattere con cui riempire la stringa
- * @param space Numero di caratteri da copiare
- * @return Codice di ritorno
+ * @brief Function to fill a string with the same character
+ * @param str Destination string
+ * @param offset Start position of the copy
+ * @param fill Character with which to fill the string
+ * @param space Number of characters to copy
+ * @return Return code
  */
 static int strlab_fill_offset(strlab_pointer str, size_t offset, int fill, size_t space) {
     if(offset > str->len) return STRLAB_OUT_OF_RANGE;
@@ -174,11 +175,11 @@ static int strlab_fill_offset(strlab_pointer str, size_t offset, int fill, size_
 
 /**
  * @internal
- * @brief Funzione per cancellare dei caratteri da una stringa
- * @param str Stringa da modificare
- * @param offset Posizione di inizio della cancellazione
- * @param torm Numero di caratteri da rimuovere
- * @return Codice di ritorno
+ * @brief Function to delete characters from a string
+ * @param str String to modify
+ * @param offset Start position of deletion
+ * @param torm Number of characters to remove
+ * @return Return code
  */
 static int strlab_remove_offset(strlab_pointer str, size_t offset, size_t torm) {
     if(offset > str->len) return STRLAB_OUT_OF_RANGE;
@@ -195,12 +196,12 @@ static int strlab_remove_offset(strlab_pointer str, size_t offset, size_t torm) 
 
 /**
  * @interface
- * @brief Funzione per modificare la spazio necessario per inserire una sottostringa al posto di un altra in una stringa
- * @param str Stringa da modificare
- * @param offset Posizione di inizio della modifica
- * @param oldlen Lunghezza della vecchia sottostringa
- * @param newlen Lunghezza della nuova sottostringa
- * @return Codice di errore
+ * @brief Function to change the space needed to insert a substring instead of another in a string
+ * @param str String to modify
+ * @param offset Start position of the modification
+ * @param oldlen Length of the old substring
+ * @param newlen Length of the new substring
+ * @return Error code
  */
 static int strlab_shift_offset(strlab_pointer str, size_t offset, size_t oldlen, size_t newlen) {
     if(offset > str->len) return STRLAB_OUT_OF_RANGE;
@@ -222,12 +223,12 @@ static int strlab_shift_offset(strlab_pointer str, size_t offset, size_t oldlen,
 
 /**
  * @internal
- * @brief Funzione per cercare una sottostirnga in una stringa
- * @param str Stringa base
- * @param offset Posizione di inizio della ricerca
- * @param target Sottostringa da cercare
- * @param tarlen Lunghezza della sottostringa
- * @return Posizione della sottostringa nella stringa se viene trovata, altrimenti STRLAB_NPOS
+ * @brief Function to search for a substring in a string
+ * @param str Base string
+ * @param offset Search start position
+ * @param target Substring to search for
+ * @param tarlen Length of the substring
+ * @return Position of the substring in the string if found, otherwise STRLAB_NPOS
  */
 static size_t strlab_search_offset(strlab_const_pointer str, size_t offset, const char *target, size_t tarlen) {
     if(offset > str->len) return STRLAB_NPOS;
@@ -244,11 +245,11 @@ static size_t strlab_search_offset(strlab_const_pointer str, size_t offset, cons
 
 /**
  * @internal
- * @brief Funzione per cercare una sottostringa in una stringa al contrario
- * @param str Stringa base
- * @param target Stringa da cercare
- * @param tarlen Lunghezza della stringa da cercare
- * @return Posizione della sottostringa nella stringa se viene trovata, altrimenti STRLAB_NPOS
+ * @brief Function to search for a substring in a string backwards
+ * @param str Base string
+ * @param target String to search for
+ * @param tarlen Length of the string to search for
+ * @return Position of the substring in the string if found, otherwise STRLAB_NPOS
  */
 static size_t strlab_search_backwards(strlab_const_pointer str, const char *target, size_t tarlen) {
     if(tarlen > str->len) return STRLAB_NPOS;
@@ -268,13 +269,13 @@ static size_t strlab_search_backwards(strlab_const_pointer str, const char *targ
 
 /**
  * @internal
- * @brief Funzione per inserire in cima ad una lista di stringhe una stringa
- * @param list Puntatore alla lista di stringhe
- * @param size Puntatore alla grandezza allocata della lista
- * @param len Puntatore alla lunghezza della lista
- * @param src Stringa da inserire nella lista
- * @param strlen Lunghezza della stringa
- * @return Codice di ritorno
+ * @brief Function to insert a string at the top of a list of strings
+ * @param list Pointer to the list of strings
+ * @param size Pointer to the allocated size of the list
+ * @param len Pointer to the length of the list
+ * @param src String to insert into the list
+ * @param strlen Length of the string
+ * @return Return code
  */
 static int strlab_list_append(strlab_string **list, size_t *size, size_t *len, const char *src, size_t srclen) {
     if(*len >= *size) {
@@ -325,7 +326,7 @@ void strlab_fixed(strlab_pointer str, char *buf, size_t size) {
     str->dynamic = 0;
 }
 
-void strlab_log(strlab_const_pointer str) {
+void strlab_describe(strlab_const_pointer str) {
     putchar('\'');
 
     for(size_t n = 0; n < str->len; n++) {
@@ -351,7 +352,7 @@ void strlab_log(strlab_const_pointer str) {
         "len=%zu size=%zu SSO=%s dynamic=%s\n",
         str->len, str->size,
         (str->size <= STRLAB_SSO_SIZE) ? "True" : "False",
-        str->dynamic ? "True" : "Flase"
+        str->dynamic ? "True" : "False"
     );
 }
 
