@@ -326,9 +326,30 @@ void strlab_fixed(strlab_pointer str, char *buf, size_t size) {
 }
 
 void strlab_log(strlab_const_pointer str) {
+    putchar('\'');
+
+    for(size_t n = 0; n < str->len; n++) {
+        int c = str->buf[n];
+        switch(c) {
+            case '\n': printf("\\n"); break;
+            case '\r': printf("\\r"); break;
+            case '\t': printf("\\t"); break;
+            case '\\': printf("\\\\"); break;
+            case '\a': printf("\\a"); break;
+            case '\b': printf("\\b"); break;
+            case '\v': printf("\\v"); break;
+            case '\f': printf("\\f"); break;
+            default:
+                if (isprint((unsigned char)(c))) putchar(c);
+                else printf("\\x%02x", (unsigned char)(c));
+        }
+    }
+
+    fputs("\' ", stdout);
+
     printf(
-        "'%s' len=%zu size=%zu SSO=%s dynamic=%s\n",
-        str->buf, str->len, str->size,
+        "len=%zu size=%zu SSO=%s dynamic=%s\n",
+        str->len, str->size,
         (str->size <= STRLAB_SSO_SIZE) ? "True" : "False",
         str->dynamic ? "True" : "Flase"
     );
